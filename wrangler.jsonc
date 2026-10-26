@@ -1,0 +1,14 @@
+{
+  "name": "capsule-bot",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+  "assets": { "directory": "./public" },
+  "observability": { "enabled": true },
+
+  // Daily limits per Telegram user (reset at midnight Baghdad time).
+  // ADMIN_IDS: Telegram IDs with no limit, comma-separated (send /myid to the bot to see yours).
+  "vars": { "DAILY_LIMIT": "50", "MESSAGE_LIMIT": "150", "ADMIN_IDS": "" },
+
+  "durable_objects": { "bindings": [{ "name": "QUOTA", "class_name": "UserQuota" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserQuota"] }]
+}
