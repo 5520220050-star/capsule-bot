@@ -1,6 +1,6 @@
 // Memorize The Capsule — Telegram bot (Cloudflare Worker)
 // Send a drug name (generic or trade, any case) → the bot replies with that drug's page as a PDF.
-import { DRUGS, KEYS, FILE_VERSION } from './drugs.js';
+import { DRUGS, KEYS, FILE_VERSION, BROWSE } from './drugs.js';
 
 const BOOK = 'Memorize The Capsule · Nursing Cards';
 const KEY_LIST = Object.keys(KEYS);
@@ -159,6 +159,7 @@ const HELP = (env) =>
   '• Capital or small letters do not matter\n' +
   '• Small spelling mistakes are OK: <code>amoxicilin</code>\n\n' +
   `The book covers ${DRUGS.length} common drugs. Each user can get up to ${drugLimit(env)} pages per day.\n` +
+  '/list lets you browse all drugs by body system, drug class or A–Z.\n' +
   '/limit shows how many you have left today.';
 
 async function onMessage(env, origin, msg) {
@@ -167,6 +168,12 @@ async function onMessage(env, origin, msg) {
   const text = (msg.text || '').trim();
   if (!text) return;
 
+  if (/^\/?(list|browse)\b/i.test(text) || /^(📚 )?browse/i.test(text)) {
+    const q = await useQuota(env, uid, false);
+    if (q.blocked) return;
+    const v = browseView('L');
+    return tg(env, 'sendMessage', { chat_id: chat, text: v.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: v.kb } });
+  }
   if (/^\/myid\b/i.test(text)) return tg(env, 'sendMessage', { chat_id: chat, text: `Your Telegram ID: <code>${uid}</code>`, parse_mode: 'HTML' });
   if (/^\/limit\b/i.test(text)) {
     const p = await peekQuota(env, uid);
@@ -185,7 +192,8 @@ async function onMessage(env, origin, msg) {
     if (q.notify) await tg(env, 'sendMessage', { chat_id: chat, text: 'You are sending too many messages today. Please try again tomorrow.' });
     return;
   }
-  if (isHelp) return tg(env, 'sendMessage', { chat_id: chat, text: HELP(env), parse_mode: 'HTML' });
+  if (isHelp) return tg(env, 'sendMessage', { chat_id: chat, text: HELP(env), parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: [[{ text: '📚 Browse drugs by system or A–Z', callback_data: 'L' }]] } });
   if (single) {
     if (!q.drugOk) return tg(env, 'sendMessage', { chat_id: chat, text: limitText(env), parse_mode: 'HTML' });
     return sendDrug(env, origin, chat, res.exact[0], msg.message_id, q.left);
@@ -213,7 +221,46 @@ async function onMessage(env, origin, msg) {
   });
 }
 
+// ---------- Browse list (no daily page quota used) ----------
+const rows = (btns, per) => { const r = []; for (let i = 0; i < btns.length; i += per) r.push(btns.slice(i, i + per)); return r; };
+const LETTERS = [...new Set(DRUGS.map((d) => d.n[0].toUpperCase()))].sort();
+function browseView(data) {
+  if (data === 'L') {
+    return { text: '📚 <b>Browse the book</b>\nChoose a part (body system), or browse A–Z:',
+      kb: [...BROWSE.map(([pn], i) => [{ text: `${i + 1}. ${pn}`, callback_data: 'p:' + i }]), [{ text: '🔤 A–Z list', callback_data: 'A' }]] };
+  }
+  if (data === 'A') {
+    return { text: '🔤 <b>A–Z</b>\nChoose the first letter:',
+      kb: [...rows(LETTERS.map((l) => ({ text: l, callback_data: 'a:' + l })), 6), [{ text: '⬅️ Back', callback_data: 'L' }]] };
+  }
+  let m = /^a:([A-Z0-9])$/.exec(data);
+  if (m) {
+    const ids = DRUGS.map((d, i) => i).filter((i) => DRUGS[i].n[0].toUpperCase() === m[1]).sort((a, b) => DRUGS[a].n.localeCompare(DRUGS[b].n));
+    return { text: `🔤 <b>${m[1]}</b> — tap a drug to get its page:`,
+      kb: [...rows(ids.map((i) => ({ text: DRUGS[i].n, callback_data: 'd:' + i })), 2), [{ text: '⬅️ Letters', callback_data: 'A' }]] };
+  }
+  m = /^p:(\d+)$/.exec(data);
+  if (m && BROWSE[+m[1]]) {
+    const [pn, cls] = BROWSE[+m[1]];
+    return { text: `📚 <b>${esc(pn)}</b>\nChoose a drug class:`,
+      kb: [...cls.map(([cn, ids], j) => [{ text: `${cn} (${ids.length})`, callback_data: `c:${m[1]}:${j}` }]), [{ text: '⬅️ All parts', callback_data: 'L' }]] };
+  }
+  m = /^c:(\d+):(\d+)$/.exec(data);
+  if (m && BROWSE[+m[1]] && BROWSE[+m[1]][1][+m[2]]) {
+    const [pn, cls] = BROWSE[+m[1]]; const [cn, ids] = cls[+m[2]];
+    return { text: `📚 ${esc(pn)}\n<b>${esc(cn)}</b> — tap a drug to get its page:`,
+      kb: [...rows(ids.map((i) => ({ text: DRUGS[i].n, callback_data: 'd:' + i })), 2), [{ text: '⬅️ Classes', callback_data: 'p:' + m[1] }]] };
+  }
+  return null;
+}
+
 async function onCallback(env, origin, cq) {
+  const view = browseView(cq.data || '');
+  if (view && cq.message) {
+    await tg(env, 'answerCallbackQuery', { callback_query_id: cq.id });
+    return tg(env, 'editMessageText', { chat_id: cq.message.chat.id, message_id: cq.message.message_id,
+      text: view.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: view.kb } });
+  }
   const m = /^d:(\d+)$/.exec(cq.data || '');
   if (!m || !DRUGS[+m[1]] || !cq.message) return tg(env, 'answerCallbackQuery', { callback_query_id: cq.id });
   const q = await useQuota(env, cq.from.id, true);
@@ -258,6 +305,7 @@ export default {
         commands: [
           { command: 'start', description: 'How to use the bot' },
           { command: 'help', description: 'How to use the bot' },
+          { command: 'list', description: 'Browse drugs by system, class or A–Z' },
           { command: 'limit', description: 'Pages left today' },
         ],
       });
