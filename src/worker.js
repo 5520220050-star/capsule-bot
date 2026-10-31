@@ -1,6 +1,6 @@
 // Memorize The Capsule — Telegram bot (Cloudflare Worker)
 // Send a drug name (generic or trade, any case) → the bot replies with that drug's page as a PDF.
-import { DRUGS, KEYS } from './drugs.js';
+import { DRUGS, KEYS, FILE_VERSION } from './drugs.js';
 
 const BOOK = 'Memorize The Capsule · Nursing Cards';
 const KEY_LIST = Object.keys(KEYS);
@@ -144,7 +144,7 @@ async function sendDrug(env, origin, chat, i, replyTo, left) {
   await tg(env, 'sendChatAction', { chat_id: chat, action: 'upload_document' });
   const r = await tg(env, 'sendDocument', {
     chat_id: chat,
-    document: `${origin}/${d.u}`,
+    document: `${origin}/${d.u}?v=${FILE_VERSION}`,
     caption,
     parse_mode: 'HTML',
     ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
