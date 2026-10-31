@@ -140,7 +140,12 @@ const limitText = (env) =>
 async function sendDrug(env, origin, chat, i, replyTo, left) {
   const d = DRUGS[i];
   const leftTxt = left === Infinity || left == null ? '' : `\n${left} page${left === 1 ? '' : 's'} left today`;
-  const caption = `<b>${esc(d.n)}</b>\n${esc(d.c)}\n<i>${esc(BOOK)} · page ${d.p}</i>${leftTxt}`;
+  let caption = `<b>${esc(d.n)}</b>\n${esc(d.c)}\n<i>${esc(BOOK)} · page ${d.p}</i>${leftTxt}`;
+  if (d.r && d.r.length) {
+    let refs = '';
+    for (const r of d.r) { const line = '\n• ' + esc(r); if ((caption + '\n\n<b>Sources:</b>' + refs + line).length > 1000) break; refs += line; }
+    if (refs) caption += '\n\n<b>Sources:</b>' + refs;
+  }
   await tg(env, 'sendChatAction', { chat_id: chat, action: 'upload_document' });
   const r = await tg(env, 'sendDocument', {
     chat_id: chat,
@@ -181,7 +186,7 @@ async function onMessage(env, origin, msg) {
     return tg(env, 'sendMessage', { chat_id: chat, text: t, parse_mode: 'HTML' });
   }
 
-  const isHelp = /^\/(start|help)\b/i.test(text);
+  const isHelp = /^\/(start|help)\b/i.test(text) || /^(ℹ️\s*)?help$/i.test(text);
   const query = isHelp ? '' : text.replace(/^\/\w+(@\w+)?\s*/, '').slice(0, 60);
   if (!isHelp && !query) return;
   const res = isHelp ? null : search(query);
@@ -192,8 +197,7 @@ async function onMessage(env, origin, msg) {
     if (q.notify) await tg(env, 'sendMessage', { chat_id: chat, text: 'You are sending too many messages today. Please try again tomorrow.' });
     return;
   }
-  if (isHelp) return tg(env, 'sendMessage', { chat_id: chat, text: HELP(env), parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[{ text: '📚 Browse drugs by system or A–Z', callback_data: 'L' }]] } });
+  if (isHelp) return tg(env, 'sendMessage', { chat_id: chat, text: HELP(env), parse_mode: 'HTML', reply_markup: MAIN_KB });
   if (single) {
     if (!q.drugOk) return tg(env, 'sendMessage', { chat_id: chat, text: limitText(env), parse_mode: 'HTML' });
     return sendDrug(env, origin, chat, res.exact[0], msg.message_id, q.left);
@@ -220,6 +224,9 @@ async function onMessage(env, origin, msg) {
     parse_mode: 'HTML',
   });
 }
+
+// Buttons that stay under the message box, so users can always return to the main list
+const MAIN_KB = { keyboard: [[{ text: '📚 Browse drugs' }, { text: 'ℹ️ Help' }]], resize_keyboard: true, is_persistent: true };
 
 // ---------- Browse list (no daily page quota used) ----------
 const rows = (btns, per) => { const r = []; for (let i = 0; i < btns.length; i += per) r.push(btns.slice(i, i + per)); return r; };
@@ -258,6 +265,7 @@ async function onCallback(env, origin, cq) {
   const view = browseView(cq.data || '');
   if (view && cq.message) {
     await tg(env, 'answerCallbackQuery', { callback_query_id: cq.id });
+    if (cq.message.document || !cq.message.text) return tg(env, 'sendMessage', { chat_id: cq.message.chat.id, text: view.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: view.kb } });
     return tg(env, 'editMessageText', { chat_id: cq.message.chat.id, message_id: cq.message.message_id,
       text: view.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: view.kb } });
   }
