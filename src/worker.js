@@ -1,6 +1,6 @@
 // Memorize The Capsule — Telegram bot (Cloudflare Worker)
 // Send a drug name (generic or trade, any case) → the bot replies with that drug's page as a PDF.
-import { DRUGS, KEYS, FILE_VERSION, BROWSE } from './drugs.js';
+import { DRUGS, KEYS, FILE_VERSION, BROWSE, REF_FILE } from './drugs.js';
 
 const BOOK = 'Memorize The Capsule · Nursing Cards';
 const KEY_LIST = Object.keys(KEYS);
@@ -142,9 +142,8 @@ async function sendDrug(env, origin, chat, i, replyTo, left) {
   const leftTxt = left === Infinity || left == null ? '' : `\n${left} page${left === 1 ? '' : 's'} left today`;
   let caption = `<b>${esc(d.n)}</b>\n${esc(d.c)}\n<i>${esc(BOOK)} · page ${d.p}</i>${leftTxt}`;
   if (d.r && d.r.length) {
-    let refs = '';
-    for (const r of d.r) { const line = '\n• ' + esc(r); if ((caption + '\n\n<b>Sources:</b>' + refs + line).length > 1000) break; refs += line; }
-    if (refs) caption += '\n\n<b>Sources:</b>' + refs;
+    const nums = d.r.map((r) => (/^\[(\d+)\]/.exec(r) || [])[1]).filter(Boolean).join(', ');
+    caption += `\n\n📚 References for this page: <b>${nums}</b>\nClick this command below to get references\nاضغط الأمر ادناه لرؤية المصادر\n/references`;
   }
   await tg(env, 'sendChatAction', { chat_id: chat, action: 'upload_document' });
   const r = await tg(env, 'sendDocument', {
@@ -165,6 +164,7 @@ const HELP = (env) =>
   '• Small spelling mistakes are OK: <code>amoxicilin</code>\n\n' +
   `The book covers ${DRUGS.length} common drugs. Each user can get up to ${drugLimit(env)} pages per day.\n` +
   '/list lets you browse all drugs by body system, drug class or A–Z.\n' +
+  '/references sends the full reference list of the book.\n' +
   '/limit shows how many you have left today.';
 
 async function onMessage(env, origin, msg) {
@@ -178,6 +178,15 @@ async function onMessage(env, origin, msg) {
     if (q.blocked) return;
     const v = browseView('L');
     return tg(env, 'sendMessage', { chat_id: chat, text: v.text, parse_mode: 'HTML', reply_markup: { inline_keyboard: v.kb } });
+  }
+  if (/^\/(references?|refs?)\b/i.test(text)) {
+    const q = await useQuota(env, uid, false);
+    if (q.blocked) return;
+    await tg(env, 'sendChatAction', { chat_id: chat, action: 'upload_document' });
+    const r = await tg(env, 'sendDocument', { chat_id: chat, document: `${origin}/${REF_FILE}?v=${FILE_VERSION}`, parse_mode: 'HTML',
+      caption: `📚 <b>${esc(BOOK)} — References</b>\nThe numbers on each drug page and caption match the numbered list in this file.\nالأرقام في كل صفحة دواء تطابق قائمة المصادر المرقمة في هذا الملف.` });
+    if (!r.ok) await tg(env, 'sendMessage', { chat_id: chat, text: 'Sorry, the file could not be sent. Please try again in a moment.' });
+    return;
   }
   if (/^\/myid\b/i.test(text)) return tg(env, 'sendMessage', { chat_id: chat, text: `Your Telegram ID: <code>${uid}</code>`, parse_mode: 'HTML' });
   if (/^\/limit\b/i.test(text)) {
@@ -314,6 +323,7 @@ export default {
           { command: 'start', description: 'How to use the bot' },
           { command: 'help', description: 'How to use the bot' },
           { command: 'list', description: 'Browse drugs by system, class or A–Z' },
+          { command: 'references', description: 'All references of the book (PDF)' },
           { command: 'limit', description: 'Pages left today' },
         ],
       });
